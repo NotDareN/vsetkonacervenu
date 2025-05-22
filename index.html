@@ -28,6 +28,9 @@
         <button id="deposit-btn" class="deposit-btn">
             <span style="font-size:22px;vertical-align:middle;">💰</span> Deposit
         </button>
+        <button id="undo-bet-btn" class="spin-btn" style="background:#333;color:#ffd600;font-size:18px;padding:10px 36px;margin-left:12px;">
+            ⏪ Undo Last Bet
+        </button>
     </div>
     <div id="main-container">
         <div id="roulette-wheel" style="margin-bottom:80px;">
@@ -117,11 +120,15 @@
 
         // Chip placement logic
         let placedBets = {}; // { betKey: amount }
+        // Store bet history for undo
+        let betHistory = [];
+
         board.addEventListener('click', function(e) {
             const cell = e.target.closest('.board-cell');
             if (!cell) return;
             const betKey = cell.dataset.bet;
             placedBets[betKey] = (placedBets[betKey] || 0) + selectedChip;
+            betHistory.push({ type: 'number', key: betKey, amount: selectedChip });
             updateChips();
         });
 
@@ -150,6 +157,7 @@
                 }
                 btn.onclick = () => {
                     betBarBets[opt.key] = (betBarBets[opt.key] || 0) + selectedChip;
+                    betHistory.push({ type: 'bar', key: opt.key, amount: selectedChip });
                     renderBetBar();
                 };
                 betBar.appendChild(btn);
@@ -191,6 +199,8 @@
             updateBalance();
             document.getElementById('result').textContent = "";
             placedBets = {};
+            betBarBets = {};
+            betHistory = [];
             updateChips();
         };
 
@@ -285,9 +295,13 @@
                            Object.values(betBarBets).reduce((a, b) => a + b, 0);
             if (totalBet > balance) {
                 document.getElementById('result').textContent = "Insufficient balance!";
+                placedBets = {};
+                betBarBets = {};
+                betHistory = [];
+                updateChips();
                 return;
             }
-            if (totalBet < 0.5 || totalBet > 500) {
+            if (totalBet < 0.5 || totalBet > 1000) {
                 document.getElementById('result').textContent = "Total bet must be between 0.5 and 500 euros!";
                 return;
             }
@@ -364,10 +378,25 @@
                     spinning = false;
                     placedBets = {};
                     betBarBets = {};
+                    betHistory = [];
                     updateChips();
                 }
             }
             animate();
+        };
+
+        // Undo last bet logic
+        document.getElementById('undo-bet-btn').onclick = function() {
+            if (betHistory.length === 0) return;
+            const last = betHistory.pop();
+            if (last.type === 'number') {
+                placedBets[last.key] -= last.amount;
+                if (placedBets[last.key] <= 0) delete placedBets[last.key];
+            } else if (last.type === 'bar') {
+                betBarBets[last.key] -= last.amount;
+                if (betBarBets[last.key] <= 0) delete betBarBets[last.key];
+            }
+            updateChips();
         };
     </script>
 </body>
