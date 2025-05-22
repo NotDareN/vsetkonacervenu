@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>DareNova Ruletka</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <h1>DareNova Ruletka</h1>
+        <h2>Gambli sa dušou!!</h2>
+    <div id="balance">Balance: €<span id="balance-value">0</span></div>
+    <div id="deposit-section">
+        <div class="deposit-input-group">
+            <label for="deposit-amount" class="deposit-label">
+                <svg width="22" height="22" class="deposit-euro-svg" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="#ffd600"/><text x="12" y="17" text-anchor="middle" font-size="14" fill="#222" font-family="Arial" font-weight="bold">€</text></svg>
+                Deposit
+            </label>
+            <input
+                type="number"
+                id="deposit-amount"
+                min="1"
+                max="500"
+                placeholder="Enter amount"
+                class="deposit-input"
+            >
+            <span id="deposit-euro" class="deposit-euro">€</span>
+        </div>
+        <button id="deposit-btn" class="deposit-btn">
+            <span style="font-size:22px;vertical-align:middle;">💰</span> Deposit
+        </button>
+    </div>
+    <div id="main-container">
+        <div id="roulette-wheel" style="margin-bottom:80px;">
+            <div id="pointer"></div>
+            <canvas id="wheel-canvas" width="500" height="500"></canvas>
+        </div>
+        <div id="board-container">
+            <div id="chip-selector"></div>
+            <div id="bet-bar"></div>
+            <div id="roulette-board"></div>
+            <button id="spin-btn" class="spin-btn"><span style="font-size:28px;vertical-align:middle;">🎲</span> Spin!</button>
+            <div id="result"></div>
+        </div>
+    </div>
+    <script>
+        // --- JS LOGIC ---
+
+        // Wheel data
+        const numbers = [
+            0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24,
+            16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26
+        ];
+        const colors = [
+            'green', 'red', 'black', 'red', 'black', 'red', 'black', 'red', 'black', 'red', 'black',
+            'red', 'black', 'red', 'black', 'red', 'black', 'red', 'black', 'red', 'black',
+            'red', 'black', 'red', 'black', 'red', 'black', 'red', 'black', 'red', 'black',
+            'red', 'black', 'red', 'black', 'red', 'black'
+        ];
+
+        // Chip values
+        const chipValues = [0.5, 1, 2, 5, 10, 25, 50, 100, 200, 500];
+
+        // Render chip selector
+        const chipSelector = document.getElementById('chip-selector');
+        let selectedChip = chipValues[3]; // Default 5
+        chipValues.forEach(val => {
+            const btn = document.createElement('button');
+            btn.className = 'chip-btn' + (val === selectedChip ? ' selected' : '');
+            btn.textContent = val % 1 === 0 ? val : val.toFixed(1);
+            btn.onclick = () => {
+                document.querySelectorAll('.chip-btn').forEach(b => b.classList.remove('selected'));
+                btn.classList.add('selected');
+                selectedChip = val;
+                renderBetBar();
+            };
+            chipSelector.appendChild(btn);
+        });
+
+        // Board layout: 3 rows x 12 columns (1-36), plus 0
+        const boardRows = 3;
+        const boardCols = 12;
+        const boardNumbers = [];
+        for (let row = 0; row < boardRows; row++) {
+            for (let col = 0; col < boardCols; col++) {
+                boardNumbers.push(3 * col + (3 - row));
+            }
+        }
+
+        // Board rendering
+        const board = document.getElementById('roulette-board');
+        function renderBoard() {
+            board.innerHTML = '';
+            // 0 cell (spans 3 rows)
+            const zeroCell = document.createElement('div');
+            zeroCell.className = 'board-cell green';
+            zeroCell.textContent = '0';
+            zeroCell.dataset.bet = '0';
+            zeroCell.style.gridRow = '1 / span 3';
+            zeroCell.style.gridColumn = '1';
+            board.appendChild(zeroCell);
+
+            // Number cells
+            for (let i = 0; i < boardNumbers.length; i++) {
+                const n = boardNumbers[i];
+                const idx = numbers.indexOf(n);
+                const color = colors[idx];
+                const cell = document.createElement('div');
+                cell.className = `board-cell ${color}`;
+                cell.textContent = n;
+                cell.dataset.bet = n;
+                cell.style.gridColumn = (Math.floor(i / 3) + 2);
+                cell.style.gridRow = ((i % 3) + 1);
+                board.appendChild(cell);
+            }
+        }
+        renderBoard();
+
+        // Chip placement logic
+        let placedBets = {}; // { betKey: amount }
+        board.addEventListener('click', function(e) {
+            const cell = e.target.closest('.board-cell');
+            if (!cell) return;
+            const betKey = cell.dataset.bet;
+            placedBets[betKey] = (placedBets[betKey] || 0) + selectedChip;
+            updateChips();
+        });
+
+        // Bet bar logic
+        const betBar = document.getElementById('bet-bar');
+        const betBarOptions = [
+            { key: 'red', label: 'Red', color: '#e53935' },
+            { key: 'black', label: 'Black', color: '#222' },
+            { key: 'even', label: 'Even', color: '#ffd600' },
+            { key: 'odd', label: 'Odd', color: '#ffd600' }
+        ];
+        let betBarBets = {}; // { key: amount }
+
+        function renderBetBar() {
+            betBar.innerHTML = '';
+            betBarOptions.forEach(opt => {
+                const btn = document.createElement('button');
+                btn.className = 'bet-bar-btn' + (betBarBets[opt.key] ? ' selected' : '');
+                btn.style.borderColor = opt.color;
+                btn.innerHTML = opt.label;
+                if (betBarBets[opt.key]) {
+                    const chip = document.createElement('span');
+                    chip.className = 'bet-bar-chip';
+                    chip.textContent = betBarBets[opt.key] % 1 === 0 ? betBarBets[opt.key] : betBarBets[opt.key].toFixed(1);
+                    btn.appendChild(chip);
+                }
+                btn.onclick = () => {
+                    betBarBets[opt.key] = (betBarBets[opt.key] || 0) + selectedChip;
+                    renderBetBar();
+                };
+                betBar.appendChild(btn);
+            });
+        }
+        renderBetBar();
+
+        // Overwrite updateChips to also update bet bar
+        function updateChips() {
+            document.querySelectorAll('.chip-on-board').forEach(chip => chip.remove());
+            document.querySelectorAll('.board-cell').forEach(cell => cell.classList.remove('selected'));
+            for (const [betKey, amount] of Object.entries(placedBets)) {
+                const cell = [...board.children].find(c => c.dataset.bet === betKey);
+                if (cell) {
+                    cell.classList.add('selected');
+                    const chip = document.createElement('div');
+                    chip.className = 'chip-on-board';
+                    chip.textContent = amount % 1 === 0 ? amount : amount.toFixed(1);
+                    cell.appendChild(chip);
+                }
+            }
+            renderBetBar();
+        }
+
+        // Deposit and balance logic
+        let balance = 0;
+        function updateBalance() {
+            document.getElementById('balance-value').textContent = balance;
+        }
+        updateBalance();
+
+        document.getElementById('deposit-btn').onclick = function() {
+            const dep = parseFloat(document.getElementById('deposit-amount').value);
+            if (isNaN(dep) || dep < 1 || dep > 500) {
+                alert("Deposit must be between 1 and 500 euros.");
+                return;
+            }
+            balance = dep;
+            updateBalance();
+            document.getElementById('result').textContent = "";
+            placedBets = {};
+            updateChips();
+        };
+
+        // Wheel drawing
+        const wheelCanvas = document.getElementById('wheel-canvas');
+        const ctx = wheelCanvas.getContext('2d');
+        const radius = 250;
+        function drawWheel(angle=0) {
+            ctx.clearRect(0, 0, 500, 500);
+
+            // Draw colored sectors
+            for (let i = 0; i < numbers.length; i++) {
+                ctx.save();
+                ctx.translate(250, 250);
+                ctx.rotate(angle + i * (2 * Math.PI / numbers.length));
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.arc(0, 0, radius, 0, 2 * Math.PI / numbers.length, false);
+                ctx.closePath();
+                ctx.fillStyle = colors[i];
+                ctx.shadowColor = "#000";
+                ctx.shadowBlur = 8;
+                ctx.fill();
+                ctx.restore();
+            }
+
+            // Draw sector separators
+            for (let i = 0; i < numbers.length; i++) {
+                ctx.save();
+                ctx.translate(250, 250);
+                ctx.rotate(angle + i * (2 * Math.PI / numbers.length));
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.lineTo(radius, 0);
+                ctx.strokeStyle = "#fff";
+                ctx.lineWidth = 2;
+                ctx.shadowColor = "#ffd600";
+                ctx.shadowBlur = 4;
+                ctx.stroke();
+                ctx.restore();
+            }
+
+            // Draw numbers
+            for (let i = 0; i < numbers.length; i++) {
+                ctx.save();
+                ctx.translate(250, 250);
+                ctx.rotate(angle + i * (2 * Math.PI / numbers.length) + (Math.PI / numbers.length));
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.font = "bold 22px Arial";
+                ctx.fillStyle = "#fff";
+                ctx.shadowColor = "#000";
+                ctx.shadowBlur = 6;
+                ctx.save();
+                ctx.rotate(Math.PI / 2);
+                ctx.fillText(numbers[i], 0, -radius + 32);
+                ctx.restore();
+                ctx.restore();
+            }
+
+            // Draw inner circle
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(250, 250, 120, 0, 2 * Math.PI);
+            ctx.fillStyle = "#222";
+            ctx.shadowColor = "#000";
+            ctx.shadowBlur = 16;
+            ctx.fill();
+            ctx.restore();
+
+            // Draw center
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(250, 250, 40, 0, 2 * Math.PI);
+            ctx.fillStyle = "#ffd600";
+            ctx.shadowColor = "#fff";
+            ctx.shadowBlur = 12;
+            ctx.fill();
+            ctx.restore();
+        }
+        drawWheel();
+
+        // Spin logic
+        let spinning = false;
+        document.getElementById('spin-btn').onclick = function() {
+            if (spinning) return;
+            if (Object.keys(placedBets).length === 0 && Object.keys(betBarBets).length === 0) {
+                document.getElementById('result').textContent = "Please place at least one bet!";
+                return;
+            }
+            let totalBet = Object.values(placedBets).reduce((a, b) => a + b, 0) +
+                           Object.values(betBarBets).reduce((a, b) => a + b, 0);
+            if (totalBet > balance) {
+                document.getElementById('result').textContent = "Insufficient balance!";
+                return;
+            }
+            if (totalBet < 0.5 || totalBet > 500) {
+                document.getElementById('result').textContent = "Total bet must be between 0.5 and 500 euros!";
+                return;
+            }
+            spinning = true;
+            let angle = 0;
+            let speed = Math.random() * 0.2 + 0.25;
+            let deceleration = 0.995 + Math.random() * 0.002;
+
+            // Preselect the winning number
+            let sector = Math.floor(Math.random() * numbers.length);
+            let resultNumber = numbers[sector];
+            let resultColor = colors[sector];
+            // Pointer is at 90deg (bottom), so align the sector there
+            let finalAngle = (Math.PI / 2) - (sector * (2 * Math.PI / numbers.length)) - (Math.PI / numbers.length);
+
+            function animate() {
+                if (speed > 0.01) {
+                    angle += speed;
+                    speed *= deceleration;
+                } else {
+                    angle += (finalAngle - angle) * 0.08;
+                    if (Math.abs(finalAngle - angle) < 0.002) {
+                        angle = finalAngle;
+                    }
+                }
+                drawWheel(angle);
+
+                if (Math.abs(finalAngle - angle) > 0.002) {
+                    requestAnimationFrame(animate);
+                } else {
+                    let win = false;
+                    let payout = 0;
+                    let winTypes = [];
+
+                    balance -= totalBet;
+
+                    if (placedBets[resultNumber]) {
+                        payout += placedBets[resultNumber] * 36;
+                        win = true;
+                        winTypes.push(`Number (${resultNumber})`);
+                    }
+                    if (betBarBets['red'] && resultColor === 'red') {
+                        payout += betBarBets['red'] * 2;
+                        win = true;
+                        winTypes.push('Red');
+                    }
+                    if (betBarBets['black'] && resultColor === 'black') {
+                        payout += betBarBets['black'] * 2;
+                        win = true;
+                        winTypes.push('Black');
+                    }
+                    if (betBarBets['even'] && resultNumber !== 0 && resultNumber % 2 === 0) {
+                        payout += betBarBets['even'] * 2;
+                        win = true;
+                        winTypes.push('Even');
+                    }
+                    if (betBarBets['odd'] && resultNumber % 2 === 1) {
+                        payout += betBarBets['odd'] * 2;
+                        win = true;
+                        winTypes.push('Odd');
+                    }
+
+                    if (payout > 0) {
+                        balance += payout;
+                    }
+
+                    updateBalance();
+
+                    document.getElementById('result').innerHTML =
+                        `Result: <b>${resultNumber}</b> (${resultColor})<br>` +
+                        (win
+                            ? `<span style="color:lime">You win €${payout}! (${winTypes.join(", ")})</span>`
+                            : `<span style="color:tomato">You lose.</span>`);
+                    spinning = false;
+                    placedBets = {};
+                    betBarBets = {};
+                    updateChips();
+                }
+            }
+            animate();
+        };
+    </script>
+</body>
+</html>
